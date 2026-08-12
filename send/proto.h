@@ -7,7 +7,7 @@
 #define URTS_MAGIC1 'R'
 #define URTS_MAGIC2 'T'
 #define URTS_MAGIC3 'S'
-#define URTS_VERSION 1
+#define URTS_VERSION 2
 
 #define URTS_FLAG_KEY   0x01
 #define URTS_FLAG_LAST  0x02
@@ -19,7 +19,7 @@
     (((flags) & ~URTS_FLAG_CAM_MASK) | (((cam) << URTS_FLAG_CAM_SHIFT) & URTS_FLAG_CAM_MASK))
 
 #define URTS_PAYLOAD_MAX 1400
-#define URTS_HEADER_SIZE 28
+#define URTS_HEADER_SIZE 44
 #define URTS_PKT_MAX     (URTS_HEADER_SIZE + URTS_PAYLOAD_MAX)
 
 #pragma pack(push, 1)
@@ -33,6 +33,8 @@ typedef struct {
     uint16_t frag_idx;
     uint16_t frag_cnt;
     uint16_t payload_len;
+    uint64_t enc_done_ns;
+    uint64_t frag_tx_ns;
 } UrtsHeader;
 #pragma pack(pop)
 

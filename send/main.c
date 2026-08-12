@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "cam_v4l2.h"
 #include "mpp_enc.h"
@@ -11,7 +12,7 @@
 #define WIDTH  1920
 #define HEIGHT 1536
 #define FPS    30
-#define BPS    (50 * 1000 * 1000)
+#define BPS    (25 * 1000 * 1000)
 
 static volatile int g_run = 1;
 
@@ -19,6 +20,20 @@ static void on_sig(int sig)
 {
     (void)sig;
     g_run = 0;
+}
+
+static int64_t mono_ns(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+}
+
+static uint64_t realtime_ns(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
 }
 
 struct CamWorker {
@@ -83,16 +98,26 @@ static void *cam_thread(void *arg)
         const uint8_t *pkt = NULL;
         size_t pkt_len = 0;
         int key = 0;
-        if (mpp_enc_encode(enc, mbuf, &pkt, &pkt_len, &key) == 0 && pkt_len > 0) {
-            if (udp_tx_send_au(tx, pkt, pkt_len, frame_id, pts_ns, key, w->cam_id) != 0)
+        int64_t t0 = mono_ns();
+        int enc_ok = mpp_enc_encode(enc, mbuf, &pkt, &pkt_len, &key);
+        uint64_t enc_done_ns = realtime_ns();
+        int64_t encode_us = (mono_ns() - t0) / 1000;
+
+        if (enc_ok == 0 && pkt_len > 0) {
+            if (udp_tx_send_au(tx, pkt, pkt_len, frame_id, pts_ns, enc_done_ns,
+                               key, w->cam_id) != 0)
                 fprintf(stderr, "cam%d send frame %u failed\n", w->cam_id, frame_id);
-            if ((frame_id % 30) == 0)
-                printf("cam%d frame %u seq=%u pts_ns=%llu len=%zu\n",
+            if ((frame_id % 30) == 0) {
+                printf("cam%d frame %u seq=%u pts_ns=%llu len=%zu encode_us=%lld key=%d\n",
                        w->cam_id, frame_id, seq,
-                       (unsigned long long)pts_ns, pkt_len);
+                       (unsigned long long)pts_ns, pkt_len,
+                       (long long)encode_us, key);
+                fflush(stdout);
+            }
             frame_id++;
         } else {
-            fprintf(stderr, "cam%d encode failed\n", w->cam_id);
+            fprintf(stderr, "cam%d encode failed encode_us=%lld\n",
+                    w->cam_id, (long long)encode_us);
         }
 
         cam_v4l2_put_frame(cam, idx);
