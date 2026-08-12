@@ -10,7 +10,22 @@
 #include <unistd.h>
 
 #include "proto.h"
+#ifdef USE_NVDEC
+#include <SDL.h>
+#include "nvdec_dec.h"
+typedef NvDecCtx VideoDecCtx;
+#define video_dec_create  nvdec_dec_create
+#define video_dec_destroy nvdec_dec_destroy
+#define video_dec_decode  nvdec_dec_decode
+#define DECODER_NAME      "NVIDIA NVDEC"
+#else
 #include "mpp_dec.h"
+typedef MppDecCtx VideoDecCtx;
+#define video_dec_create  mpp_dec_create
+#define video_dec_destroy mpp_dec_destroy
+#define video_dec_decode  mpp_dec_decode
+#define DECODER_NAME      "Rockchip MPP"
+#endif
 
 #define MAX_AU (8 * 1024 * 1024)
 #define MAX_CAM 2
@@ -50,7 +65,7 @@ static uint64_t now_realtime_ns(void)
 }
 
 struct CamRx {
-    MppDecCtx *dec;
+    VideoDecCtx *dec;
     uint8_t *au;
     uint32_t cur_frame;
     uint16_t expect_frag;
@@ -64,6 +79,7 @@ struct CamRx {
 
 int main(int argc, char **argv)
 {
+    /* ==================== 阶段 1：解析配置并初始化资源 ==================== */
     if (argc < 2) {
         fprintf(stderr, "usage: %s <port>\n", argv[0]);
         return 1;
@@ -81,7 +97,7 @@ int main(int argc, char **argv)
     struct CamRx cams[MAX_CAM];
     memset(cams, 0, sizeof(cams));
     for (int i = 0; i < MAX_CAM; i++) {
-        cams[i].dec = mpp_dec_create();
+        cams[i].dec = video_dec_create();
         cams[i].au = malloc(MAX_AU);
         cams[i].cur_frame = 0xffffffffu;
         if (!cams[i].dec || !cams[i].au) {
@@ -100,6 +116,10 @@ int main(int argc, char **argv)
     setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &buf, sizeof(buf));
     int on = 1;
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+#ifdef USE_NVDEC
+    struct timeval rcv_to = {.tv_sec = 0, .tv_usec = 50000};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rcv_to, sizeof(rcv_to));
+#endif
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -112,14 +132,55 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    printf("listening udp port %d (2 cams, decode + delay)\n", port);
+    printf("listening udp port %d (2 cams, %s decode + delay)\n",
+           port, DECODER_NAME);
     fflush(stdout);
 
+#ifdef USE_NVDEC
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+        fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
+        return 1;
+    }
+    SDL_Window *win = SDL_CreateWindow("udp_rtstream realtime",
+                                       SDL_WINDOWPOS_CENTERED,
+                                       SDL_WINDOWPOS_CENTERED,
+                                       1920, 768, 0);
+    SDL_Renderer *ren = win ? SDL_CreateRenderer(win, -1,
+                                                 SDL_RENDERER_ACCELERATED) : NULL;
+    SDL_Texture *tex[MAX_CAM] = {0};
+    int show_w = 960, show_h = 768;
+    if (!win || !ren) {
+        fprintf(stderr, "SDL window/renderer failed: %s\n", SDL_GetError());
+        return 1;
+    }
+    for (int i = 0; i < MAX_CAM; i++) {
+        tex[i] = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGB24,
+                                   SDL_TEXTUREACCESS_STREAMING,
+                                   show_w, show_h);
+        if (!tex[i]) {
+            fprintf(stderr, "SDL_CreateTexture failed: %s\n", SDL_GetError());
+            return 1;
+        }
+    }
+    printf("realtime show: cam0|cam1 side-by-side %dx%d each\n", show_w, show_h);
+    fflush(stdout);
+#endif
+
+    /* ==================== 阶段 2：接收 UDP 包并重组完整 AU ==================== */
     uint8_t pkt[URTS_PKT_MAX];
     while (g_run) {
+#ifdef USE_NVDEC
+        SDL_Event ev;
+        while (SDL_PollEvent(&ev)) {
+            if (ev.type == SDL_QUIT)
+                g_run = 0;
+        }
+        if (!g_run)
+            break;
+#endif
         ssize_t n = recvfrom(fd, pkt, sizeof(pkt), 0, NULL, NULL);
         if (n < 0) {
-            if (errno == EINTR)
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
                 continue;
             perror("recvfrom");
             break;
@@ -178,18 +239,26 @@ int main(int argc, char **argv)
         c->expect_frag++;
 
         if (flags & URTS_FLAG_LAST) {
+            /* ==================== 阶段 3：硬解并统计端到端延迟 ==================== */
             uint64_t t_recv = now_realtime_ns();
             int64_t recv_delay_us = (int64_t)(t_recv - c->pts_ns) / 1000;
 
             int w = 0, h = 0;
             int dret = -1;
             int64_t decode_us = 0;
+            int64_t show_us = 0;
             int64_t e2e_delay_us = recv_delay_us;
             if (c->au_len >= 128) {
+#ifdef USE_NVDEC
+                dret = video_dec_decode(c->dec, c->au, c->au_len, &w, &h);
+                uint64_t t_dec1 = now_realtime_ns();
+                nvdec_dec_last_timing(c->dec, &decode_us, &show_us);
+#else
                 uint64_t t_dec0 = now_realtime_ns();
-                dret = mpp_dec_decode(c->dec, c->au, c->au_len, &w, &h);
+                dret = video_dec_decode(c->dec, c->au, c->au_len, &w, &h);
                 uint64_t t_dec1 = now_realtime_ns();
                 decode_us = (int64_t)(t_dec1 - t_dec0) / 1000;
+#endif
                 e2e_delay_us = (int64_t)(t_dec1 - c->pts_ns) / 1000;
             }
 
@@ -200,6 +269,21 @@ int main(int argc, char **argv)
             c->frames++;
 
             if ((c->frames % 30) == 1 || c->frames <= 3 || dret != 0) {
+#ifdef USE_NVDEC
+                printf("cam%d frame %u pts_ns=%llu au=%zu %dx%d "
+                       "pts_dt_us=%lld recv_delay_us=%lld decode_us=%lld show_us=%lld e2e_delay_us=%lld ok=%d\n",
+                       cam_id,
+                       frame_id,
+                       (unsigned long long)c->pts_ns,
+                       c->au_len,
+                       w, h,
+                       (long long)dt_us,
+                       (long long)recv_delay_us,
+                       (long long)decode_us,
+                       (long long)show_us,
+                       (long long)e2e_delay_us,
+                       dret == 0);
+#else
                 printf("cam%d frame %u pts_ns=%llu au=%zu %dx%d "
                        "pts_dt_us=%lld recv_delay_us=%lld decode_us=%lld e2e_delay_us=%lld ok=%d\n",
                        cam_id,
@@ -212,16 +296,40 @@ int main(int argc, char **argv)
                        (long long)decode_us,
                        (long long)e2e_delay_us,
                        dret == 0);
+#endif
                 fflush(stdout);
             }
+
+#ifdef USE_NVDEC
+            if (dret == 0) {
+                int rw = 0, rh = 0;
+                const uint8_t *rgb = nvdec_dec_rgb(c->dec, &rw, &rh);
+                if (rgb && rw == show_w && rh == show_h) {
+                    SDL_UpdateTexture(tex[cam_id], NULL, rgb, show_w * 3);
+                    for (int i = 0; i < MAX_CAM; i++) {
+                        SDL_Rect dst = {i * show_w, 0, show_w, show_h};
+                        SDL_RenderCopy(ren, tex[i], NULL, &dst);
+                    }
+                    SDL_RenderPresent(ren);
+                }
+            }
+#endif
             c->expect_frag = 0;
             c->au_len = 0;
         }
     }
 
+    /* ==================== 阶段 4：释放接收与解码资源 ==================== */
+#ifdef USE_NVDEC
+    for (int i = 0; i < MAX_CAM; i++)
+        SDL_DestroyTexture(tex[i]);
+    SDL_DestroyRenderer(ren);
+    SDL_DestroyWindow(win);
+    SDL_Quit();
+#endif
     for (int i = 0; i < MAX_CAM; i++) {
         free(cams[i].au);
-        mpp_dec_destroy(cams[i].dec);
+        video_dec_destroy(cams[i].dec);
     }
     close(fd);
     return 0;

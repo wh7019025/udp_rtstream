@@ -50,10 +50,13 @@ static uint64_t mono_to_realtime_ns(const struct timeval *tv)
     return (uint64_t)(mono_ns + (now_real - now_mono));
 }
 
-CamV4l2 *cam_v4l2_open(const char *device, int width, int height, int bufcnt)
+CamV4l2 *cam_v4l2_open(const char *device, int width, int height, int fps,
+                       int bufcnt)
 {
     if (bufcnt <= 0 || bufcnt > MAX_BUFS)
         bufcnt = 4;
+    if (fps <= 0)
+        fps = 30;
 
     CamV4l2 *cam = calloc(1, sizeof(*cam));
     if (!cam)
@@ -91,6 +94,21 @@ CamV4l2 *cam_v4l2_open(const char *device, int width, int height, int bufcnt)
     if (xioctl(cam->fd, VIDIOC_S_FMT, &fmt) < 0) {
         perror("VIDIOC_S_FMT");
         goto fail;
+    }
+
+    struct v4l2_streamparm parm;
+    memset(&parm, 0, sizeof(parm));
+    parm.type = cam->type;
+    parm.parm.capture.timeperframe.numerator = 1;
+    parm.parm.capture.timeperframe.denominator = fps;
+    if (xioctl(cam->fd, VIDIOC_S_PARM, &parm) < 0)
+        perror("VIDIOC_S_PARM");
+    else {
+        unsigned num = parm.parm.capture.timeperframe.numerator;
+        unsigned den = parm.parm.capture.timeperframe.denominator;
+        if (num > 0 && den > 0)
+            printf("%s requested %d fps, got %.2f fps\n",
+                   device, fps, (double)den / (double)num);
     }
 
     struct v4l2_requestbuffers req;

@@ -32,7 +32,7 @@ static void *cam_thread(void *arg)
 {
     struct CamWorker *w = arg;
 
-    CamV4l2 *cam = cam_v4l2_open(w->device, WIDTH, HEIGHT, 4);
+    CamV4l2 *cam = cam_v4l2_open(w->device, WIDTH, HEIGHT, FPS, 4);
     if (!cam) {
         fprintf(stderr, "cam%d open %s failed\n", w->cam_id, w->device);
         return NULL;

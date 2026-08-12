@@ -6,7 +6,8 @@
 
 typedef struct CamV4l2 CamV4l2;
 
-CamV4l2 *cam_v4l2_open(const char *device, int width, int height, int bufcnt);
+CamV4l2 *cam_v4l2_open(const char *device, int width, int height, int fps,
+                       int bufcnt);
 void cam_v4l2_close(CamV4l2 *cam);
 
 /* Returns buffer index >= 0, or -1 on error. */
