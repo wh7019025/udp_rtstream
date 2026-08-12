@@ -72,6 +72,8 @@ struct CamRx {
     uint16_t frag_cnt;
     size_t au_len;
     uint64_t pts_ns;
+    uint64_t enc_done_ns;
+    uint64_t first_rx_ns;
     int key;
     uint64_t last_pts;
     uint32_t frames;
@@ -204,6 +206,9 @@ int main(int argc, char **argv)
         uint16_t frag_idx = get_be16(pkt + 22);
         uint16_t fcnt = get_be16(pkt + 24);
         uint16_t plen = get_be16(pkt + 26);
+        uint64_t enc_done = get_be64(pkt + 28);
+        uint64_t frag_tx = get_be64(pkt + 36);
+        uint64_t t_pkt = now_realtime_ns();
 
         if ((size_t)n < (size_t)URTS_HEADER_SIZE + (size_t)plen)
             continue;
@@ -214,6 +219,8 @@ int main(int argc, char **argv)
             c->frag_cnt = fcnt;
             c->au_len = 0;
             c->pts_ns = pts;
+            c->enc_done_ns = enc_done;
+            c->first_rx_ns = t_pkt;
             c->key = (flags & URTS_FLAG_KEY) ? 1 : 0;
         }
 
@@ -225,6 +232,8 @@ int main(int argc, char **argv)
             c->cur_frame = frame_id;
             c->frag_cnt = fcnt;
             c->pts_ns = pts;
+            c->enc_done_ns = enc_done;
+            c->first_rx_ns = t_pkt;
             c->key = (flags & URTS_FLAG_KEY) ? 1 : 0;
         }
 
@@ -234,6 +243,9 @@ int main(int argc, char **argv)
             continue;
         }
 
+        if (frag_idx == 0)
+            c->first_rx_ns = t_pkt;
+
         memcpy(c->au + c->au_len, pkt + URTS_HEADER_SIZE, plen);
         c->au_len += plen;
         c->expect_frag++;
@@ -242,6 +254,12 @@ int main(int argc, char **argv)
             /* ==================== 阶段 3：硬解并统计端到端延迟 ==================== */
             uint64_t t_recv = now_realtime_ns();
             int64_t recv_delay_us = (int64_t)(t_recv - c->pts_ns) / 1000;
+            int64_t enc_us = (int64_t)(c->enc_done_ns - c->pts_ns) / 1000;
+            int64_t send_us = (int64_t)(frag_tx - c->enc_done_ns) / 1000;
+            int64_t net_us = (int64_t)(t_recv - frag_tx) / 1000;
+            int64_t reasm_us = 0;
+            if (c->first_rx_ns)
+                reasm_us = (int64_t)(t_recv - c->first_rx_ns) / 1000;
 
             int w = 0, h = 0;
             int dret = -1;
@@ -285,13 +303,19 @@ int main(int argc, char **argv)
                        dret == 0);
 #else
                 printf("cam%d frame %u pts_ns=%llu au=%zu %dx%d "
-                       "pts_dt_us=%lld recv_delay_us=%lld decode_us=%lld e2e_delay_us=%lld ok=%d\n",
+                       "pts_dt_us=%lld enc_us=%lld send_us=%lld net_us=%lld "
+                       "reasm_us=%lld recv_delay_us=%lld decode_us=%lld "
+                       "e2e_delay_us=%lld ok=%d\n",
                        cam_id,
                        frame_id,
                        (unsigned long long)c->pts_ns,
                        c->au_len,
                        w, h,
                        (long long)dt_us,
+                       (long long)enc_us,
+                       (long long)send_us,
+                       (long long)net_us,
+                       (long long)reasm_us,
                        (long long)recv_delay_us,
                        (long long)decode_us,
                        (long long)e2e_delay_us,

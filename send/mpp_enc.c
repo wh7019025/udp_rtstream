@@ -167,7 +167,7 @@ void mpp_enc_destroy(MppEncCtx *enc)
     free(enc);
 }
 
-static int annexb_has_sps(const uint8_t *data, size_t len)
+static int annexb_nal_type(const uint8_t *data, size_t len, int type)
 {
     for (size_t i = 0; i + 4 < len; i++) {
         int sc = 0;
@@ -177,10 +177,21 @@ static int annexb_has_sps(const uint8_t *data, size_t len)
             sc = 4;
         if (!sc)
             continue;
-        if ((data[i + sc] & 0x1f) == 7)
+        if ((data[i + sc] & 0x1f) == type)
             return 1;
     }
     return 0;
+}
+
+static int annexb_has_sps(const uint8_t *data, size_t len)
+{
+    return annexb_nal_type(data, len, 7);
+}
+
+static int annexb_is_key(const uint8_t *data, size_t len)
+{
+    /* IDR or SPS indicates random-access unit */
+    return annexb_nal_type(data, len, 5) || annexb_nal_type(data, len, 7);
 }
 
 int mpp_enc_encode(MppEncCtx *enc, MppBuffer frame_buf,
@@ -222,8 +233,10 @@ int mpp_enc_encode(MppEncCtx *enc, MppBuffer frame_buf,
 
     const uint8_t *src = mpp_packet_get_pos(packet);
     size_t src_len = mpp_packet_get_length(packet);
+    int is_key = annexb_is_key(src, src_len);
     size_t need = src_len;
-    int prepend = enc->hdr_len > 0 && !annexb_has_sps(src, src_len);
+    /* Only attach SPS/PPS on key frames when missing */
+    int prepend = is_key && enc->hdr_len > 0 && !annexb_has_sps(src, src_len);
     if (prepend)
         need += enc->hdr_len;
 
@@ -241,6 +254,7 @@ int mpp_enc_encode(MppEncCtx *enc, MppBuffer frame_buf,
     if (prepend) {
         memcpy(enc->out, enc->hdr, enc->hdr_len);
         off = enc->hdr_len;
+        is_key = 1;
     }
     memcpy(enc->out + off, src, src_len);
     off += src_len;
@@ -248,7 +262,7 @@ int mpp_enc_encode(MppEncCtx *enc, MppBuffer frame_buf,
     *out_data = enc->out;
     *out_len = off;
     if (keyframe)
-        *keyframe = 1;
+        *keyframe = is_key;
 
     mpp_packet_deinit(&packet);
     return 0;

@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
 struct UdpTx {
@@ -36,6 +37,13 @@ static void put_be64(uint8_t *p, uint64_t v)
         p[i] = (uint8_t)(v & 0xff);
         v >>= 8;
     }
+}
+
+static uint64_t now_realtime_ns(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
 }
 
 UdpTx *udp_tx_open(const char *ip, int port)
@@ -77,7 +85,8 @@ void udp_tx_close(UdpTx *tx)
 }
 
 int udp_tx_send_au(UdpTx *tx, const uint8_t *data, size_t len,
-                   uint32_t frame_id, uint64_t pts_ns, int keyframe, int cam_id)
+                   uint32_t frame_id, uint64_t pts_ns, uint64_t enc_done_ns,
+                   int keyframe, int cam_id)
 {
     if (!tx || !data || len == 0)
         return -1;
@@ -101,6 +110,8 @@ int udp_tx_send_au(UdpTx *tx, const uint8_t *data, size_t len,
             flags |= URTS_FLAG_LAST;
         flags = (uint8_t)URTS_FLAG_SET_CAM(flags, cam_id);
 
+        uint64_t frag_tx_ns = now_realtime_ns();
+
         pkt[0] = URTS_MAGIC0;
         pkt[1] = URTS_MAGIC1;
         pkt[2] = URTS_MAGIC2;
@@ -113,6 +124,8 @@ int udp_tx_send_au(UdpTx *tx, const uint8_t *data, size_t len,
         put_be16(pkt + 22, i);
         put_be16(pkt + 24, frag_cnt);
         put_be16(pkt + 26, plen);
+        put_be64(pkt + 28, enc_done_ns);
+        put_be64(pkt + 36, frag_tx_ns);
         memcpy(pkt + URTS_HEADER_SIZE, data + offset, plen);
 
         ssize_t n = sendto(tx->fd, pkt, URTS_HEADER_SIZE + plen, 0,
