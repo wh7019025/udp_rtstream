@@ -264,7 +264,9 @@ int main(int argc, char **argv)
             int w = 0, h = 0;
             int dret = -1;
             int64_t decode_us = 0;
+#ifdef USE_NVDEC
             int64_t show_us = 0;
+#endif
             int64_t e2e_delay_us = recv_delay_us;
             if (c->au_len >= 128) {
 #ifdef USE_NVDEC
@@ -287,24 +289,12 @@ int main(int argc, char **argv)
             c->frames++;
 
             if ((c->frames % 30) == 1 || c->frames <= 3 || dret != 0) {
-#ifdef USE_NVDEC
-                printf("cam%d frame %u pts_ns=%llu au=%zu %dx%d "
-                       "pts_dt_us=%lld recv_delay_us=%lld decode_us=%lld show_us=%lld e2e_delay_us=%lld ok=%d\n",
-                       cam_id,
-                       frame_id,
-                       (unsigned long long)c->pts_ns,
-                       c->au_len,
-                       w, h,
-                       (long long)dt_us,
-                       (long long)recv_delay_us,
-                       (long long)decode_us,
-                       (long long)show_us,
-                       (long long)e2e_delay_us,
-                       dret == 0);
-#else
                 printf("cam%d frame %u pts_ns=%llu au=%zu %dx%d "
                        "pts_dt_us=%lld enc_us=%lld send_us=%lld net_us=%lld "
                        "reasm_us=%lld recv_delay_us=%lld decode_us=%lld "
+#ifdef USE_NVDEC
+                       "show_us=%lld "
+#endif
                        "e2e_delay_us=%lld ok=%d\n",
                        cam_id,
                        frame_id,
@@ -318,9 +308,11 @@ int main(int argc, char **argv)
                        (long long)reasm_us,
                        (long long)recv_delay_us,
                        (long long)decode_us,
+#ifdef USE_NVDEC
+                       (long long)show_us,
+#endif
                        (long long)e2e_delay_us,
                        dret == 0);
-#endif
                 fflush(stdout);
             }
 
