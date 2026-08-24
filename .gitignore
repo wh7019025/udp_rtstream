@@ -6,3 +6,7 @@ ros_wrapper/build/
 ros_wrapper/install/
 ros_wrapper/log/
 time_sync_test/time_sync_test
+receiver_core/install
+receiver_core/build
+receiver_core/log
+remote_tool/__pycache__/
