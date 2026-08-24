@@ -1,0 +1,18 @@
+version: "0.1.2-rc3"
+id: udp-rtstream-ros
+name: UDP RTStream ROS Receiver
+description: 必要时构建并启动四路 UDP RTStream ROS 2 接收节点
+workdir: $(harbor_taskcfg_dir)/..
+env:
+  ROS_DOMAIN_ID: "57"
+  RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
+sudo: false
+command:
+  shell: bash
+  script: |
+    source /opt/ros/humble/setup.bash
+    if [[ ! -f ros_wrapper/install/setup.bash ]]; then
+      make -C receiver_core ros
+    fi
+    source ros_wrapper/install/setup.bash
+    exec ros2 run udp_rtstream_receiver receiver_node
