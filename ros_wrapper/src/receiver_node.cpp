@@ -10,6 +10,7 @@
 #include <sensor_msgs/msg/image.hpp>
 
 #include "jpeg_encoder.h"
+#include "delay_probe.h"
 #include "nvdec_dec.h"
 #include "receiver_core.h"
 
@@ -19,12 +20,23 @@
 #ifndef MAX_CAM
 #error "CAMERA_COUNT must be supplied by config.env through CMake"
 #endif
+#if !defined(DELAY_PROBE_HOST) || !defined(DELAY_PROBE_PORT) || \
+    !defined(DELAY_CHECK_THRESHOLD_US) || !defined(DELAY_CHECK_SAMPLES) || \
+    !defined(DELAY_CHECK_INTERVAL_MS)
+#error "delay check config must be supplied by config.env through CMake"
+#endif
 
 class ReceiverNode final : public rclcpp::Node {
 public:
     ReceiverNode() : Node("udp_rtstream_receiver")
     {
-        // ==================== 阶段 1：初始化共享底层和 ROS 发布器 ====================
+        // ==================== 阶段 1：独立检查时钟同步与链路延迟 ====================
+        if (delay_probe_check(DELAY_PROBE_HOST, DELAY_PROBE_PORT,
+                              DELAY_CHECK_SAMPLES, DELAY_CHECK_INTERVAL_MS,
+                              DELAY_CHECK_THRESHOLD_US) != 0)
+            throw std::runtime_error("启动延迟检查未通过");
+
+        // ==================== 阶段 2：初始化共享底层和 ROS 发布器 ====================
         receiver_ = receiver_core_create(DEFAULT_UDP_PORT, MAX_CAM);
         if (!receiver_)
             throw std::runtime_error("receiver core init failed");

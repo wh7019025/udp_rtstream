@@ -10,11 +10,19 @@ from remote_utils import load_config, remote_workspace, run_remote
 
 
 def main() -> None:
-    # ==================== 阶段 1：同步并在远端编译 ====================
+    # ==================== 阶段 1：停止已部署的后台服务 ====================
+    config = load_config()
+    print("停止远端 udp-rtstream.service……", flush=True)
+    run_remote(
+        "if systemctl cat udp-rtstream.service >/dev/null 2>&1; then "
+        "sudo -S -p '' systemctl stop udp-rtstream.service; fi",
+        input_text=config["REMOTE_PASSWORD"] + "\n",
+    )
+
+    # ==================== 阶段 2：同步并在远端编译 ====================
     compile_remote()
 
-    # ==================== 阶段 2：在远端运行发送程序 ====================
-    config = load_config()
+    # ==================== 阶段 3：在远端运行发送程序 ====================
     udp_port = int(config["UDP_PORT"])
     remote_capture = shlex.quote(f"{remote_workspace()}/capture")
     remote_command = (

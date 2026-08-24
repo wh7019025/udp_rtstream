@@ -45,7 +45,12 @@ def command_environment() -> dict[str, str]:
     return environment
 
 
-def run_remote(command: str, *, capture_output: bool = False) -> str:
+def run_remote(
+    command: str,
+    *,
+    capture_output: bool = False,
+    input_text: str | None = None,
+) -> str:
     """执行远端命令，并按需返回标准输出。"""
     ssh_command = [
         "sshpass", "-e", "ssh",
@@ -58,9 +63,21 @@ def run_remote(command: str, *, capture_output: bool = False) -> str:
         env=command_environment(),
         check=True,
         capture_output=capture_output,
+        input=input_text,
         text=True,
     )
     return completed.stdout.strip() if capture_output else ""
+
+
+def copy_to_remote(local_path: Path, remote_path: str) -> None:
+    """把单个本地文件复制到远端指定路径。"""
+    scp_command = [
+        "sshpass", "-e", "scp",
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "ConnectTimeout=10",
+        str(local_path), f"{ssh_target()}:{remote_path}",
+    ]
+    subprocess.run(scp_command, env=command_environment(), check=True)
 
 
 def sync_capture_sources() -> None:
@@ -69,7 +86,10 @@ def sync_capture_sources() -> None:
     local_capture = root / "capture"
     workspace = remote_workspace()
     remote_capture = f"{workspace}/capture"
-    run_remote(f"mkdir -p {shlex.quote(remote_capture)}")
+    remote_common = f"{workspace}/common"
+    run_remote(
+        f"mkdir -p {shlex.quote(remote_capture)} {shlex.quote(remote_common)}"
+    )
 
     source_files = sorted(
         path for path in local_capture.iterdir()
@@ -85,7 +105,13 @@ def sync_capture_sources() -> None:
     ]
     environment = command_environment()
     subprocess.run(
-        [*scp_base, str(root / "config.env"), f"{ssh_target()}:{workspace}/"],
+        [*scp_base, str(root / "config.env"),
+         f"{ssh_target()}:{workspace}/"],
+        env=environment, check=True,
+    )
+    subprocess.run(
+        [*scp_base, str(root / "common" / "delay_probe_protocol.h"),
+         f"{ssh_target()}:{remote_common}/"],
         env=environment, check=True,
     )
     subprocess.run(

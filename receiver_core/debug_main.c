@@ -7,6 +7,7 @@
 #include <time.h>
 
 #include "receiver_core.h"
+#include "delay_probe.h"
 
 #ifdef USE_NVDEC
 #include <SDL.h>
@@ -33,6 +34,11 @@ typedef MppDecCtx VideoDecCtx;
 #endif
 #ifndef STATS_WINDOW_FRAMES
 #error "STATS_WINDOW_FRAMES must be supplied by config.env through Makefile"
+#endif
+#if !defined(DELAY_PROBE_HOST) || !defined(DELAY_PROBE_PORT) || \
+    !defined(DELAY_CHECK_THRESHOLD_US) || !defined(DELAY_CHECK_SAMPLES) || \
+    !defined(DELAY_CHECK_INTERVAL_MS)
+#error "delay check config must be supplied by config.env through Makefile"
 #endif
 
 #define PREVIEW_COLS 2
@@ -230,9 +236,15 @@ static void handle_frame(const ReceiverFrame *frame, void *user)
 
 int main(void)
 {
-    /* ==================== 阶段 1：初始化共享接收底层与解码器 ==================== */
+    /* ==================== 阶段 1：独立检查时钟同步与链路延迟 ==================== */
     signal(SIGINT, stop_running);
     signal(SIGTERM, stop_running);
+    if (delay_probe_check(DELAY_PROBE_HOST, DELAY_PROBE_PORT,
+                          DELAY_CHECK_SAMPLES, DELAY_CHECK_INTERVAL_MS,
+                          DELAY_CHECK_THRESHOLD_US) != 0)
+        return 1;
+
+    /* ==================== 阶段 2：初始化共享接收底层与解码器 ==================== */
     ReceiverCore *receiver = receiver_core_create(DEFAULT_UDP_PORT, MAX_CAM);
     struct DebugApp app;
     memset(&app, 0, sizeof(app));

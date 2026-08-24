@@ -7,11 +7,12 @@
 #include <time.h>
 
 #include "cam_v4l2.h"
+#include "delay_probe_responder.h"
 #include "mpp_enc.h"
 #include "udp_tx.h"
 
 #if !defined(WIDTH) || !defined(HEIGHT) || !defined(FPS) || \
-    !defined(BPS) || !defined(NUM_CAMS)
+    !defined(BPS) || !defined(NUM_CAMS) || !defined(DELAY_PROBE_PORT)
 #error "video config must be supplied by config.env through Makefile"
 #endif
 
@@ -174,6 +175,12 @@ static void *cam_thread(void *arg)
     return NULL;
 }
 
+static void *delay_probe_thread(void *arg)
+{
+    delay_probe_responder_run(arg);
+    return NULL;
+}
+
 int main(int argc, char **argv)
 {
     /* ==================== 阶段 1：解析发送目标 ==================== */
@@ -193,7 +200,17 @@ int main(int argc, char **argv)
     signal(SIGINT, on_sig);
     signal(SIGTERM, on_sig);
 
-    /* ==================== 阶段 2：启动四路采集、编码与发送线程 ==================== */
+    /* ==================== 阶段 2：启动内置延迟探测 responder ==================== */
+    DelayProbeResponder *probe = delay_probe_responder_create(DELAY_PROBE_PORT);
+    pthread_t probe_thread;
+    if (!probe || pthread_create(&probe_thread, NULL, delay_probe_thread, probe) != 0) {
+        fprintf(stderr, "delay probe responder init failed on UDP %d\n",
+                DELAY_PROBE_PORT);
+        delay_probe_responder_destroy(probe);
+        return 1;
+    }
+
+    /* ==================== 阶段 3：启动四路采集、编码与发送线程 ==================== */
     const char *devices[] = {
         "/dev/video0", "/dev/video1", "/dev/video2", "/dev/video3"
     };
@@ -211,9 +228,13 @@ int main(int argc, char **argv)
         started++;
     }
 
-    /* ==================== 阶段 3：等待线程退出并统一回收 ==================== */
+    /* ==================== 阶段 4：等待线程退出并统一回收 ==================== */
     for (int i = 0; i < started; i++)
         pthread_join(threads[i], NULL);
+
+    delay_probe_responder_stop(probe);
+    pthread_join(probe_thread, NULL);
+    delay_probe_responder_destroy(probe);
 
     return started == NUM_CAMS ? 0 : 1;
 }

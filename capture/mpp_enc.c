@@ -13,6 +13,22 @@
 #error "VIDEO_GOP must be supplied by config.env through Makefile"
 #endif
 
+#ifndef ROTATION_DEGREES
+#error "VIDEO_ROTATION must be supplied by config.env through Makefile"
+#endif
+
+#if ROTATION_DEGREES == 0
+#define MPP_ROTATION_VALUE 0
+#elif ROTATION_DEGREES == 90
+#define MPP_ROTATION_VALUE 1
+#elif ROTATION_DEGREES == 180
+#define MPP_ROTATION_VALUE 2
+#elif ROTATION_DEGREES == 270
+#define MPP_ROTATION_VALUE 3
+#else
+#error "VIDEO_ROTATION must be one of 0, 90, 180, or 270"
+#endif
+
 struct MppEncCtx {
     MppCtx ctx;
     MppApi *mpi;
@@ -67,6 +83,7 @@ MppEncCtx *mpp_enc_create(int width, int height, int fps, int bps)
     mpp_enc_cfg_set_s32(enc->cfg, "prep:hor_stride", enc->hor_stride);
     mpp_enc_cfg_set_s32(enc->cfg, "prep:ver_stride", enc->ver_stride);
     mpp_enc_cfg_set_s32(enc->cfg, "prep:format", MPP_FMT_YUV420SP);
+    mpp_enc_cfg_set_s32(enc->cfg, "prep:rotation", MPP_ROTATION_VALUE);
 
     mpp_enc_cfg_set_s32(enc->cfg, "rc:mode", MPP_ENC_RC_MODE_CBR);
     mpp_enc_cfg_set_s32(enc->cfg, "rc:bps_target", bps);
