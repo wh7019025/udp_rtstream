@@ -1,3 +1,4 @@
+#include <limits.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
@@ -9,10 +10,10 @@
 #include "mpp_enc.h"
 #include "udp_tx.h"
 
-#define WIDTH  1920
-#define HEIGHT 1536
-#define FPS    30
-#define BPS    (25 * 1000 * 1000)
+#if !defined(WIDTH) || !defined(HEIGHT) || !defined(FPS) || \
+    !defined(BPS) || !defined(NUM_CAMS)
+#error "video config must be supplied by config.env through Makefile"
+#endif
 
 static volatile int g_run = 1;
 
@@ -85,6 +86,13 @@ static void *cam_thread(void *arg)
     fflush(stdout);
 
     uint32_t frame_id = 0;
+    int encode_samples = 0;
+    int64_t encode_sum_us = 0;
+    int64_t encode_min_us = LLONG_MAX;
+    int64_t encode_max_us = LLONG_MIN;
+    int bitrate_samples = 0;
+    uint64_t encoded_bytes = 0;
+    int64_t bitrate_start_ns = mono_ns();
     while (g_run) {
         uint64_t pts_ns = 0;
         uint32_t seq = 0;
@@ -102,8 +110,45 @@ static void *cam_thread(void *arg)
         int enc_ok = mpp_enc_encode(enc, mbuf, &pkt, &pkt_len, &key);
         uint64_t enc_done_ns = realtime_ns();
         int64_t encode_us = (mono_ns() - t0) / 1000;
+        encode_samples++;
+        encode_sum_us += encode_us;
+        if (encode_us < encode_min_us)
+            encode_min_us = encode_us;
+        if (encode_us > encode_max_us)
+            encode_max_us = encode_us;
+        if (encode_samples == 300) {
+            printf("cam%d encode_stats_us samples=%d avg=%lld min=%lld max=%lld\n",
+                   w->cam_id, encode_samples,
+                   (long long)(encode_sum_us / encode_samples),
+                   (long long)encode_min_us, (long long)encode_max_us);
+            fflush(stdout);
+            encode_samples = 0;
+            encode_sum_us = 0;
+            encode_min_us = LLONG_MAX;
+            encode_max_us = LLONG_MIN;
+        }
 
         if (enc_ok == 0 && pkt_len > 0) {
+            bitrate_samples++;
+            encoded_bytes += pkt_len;
+            if (bitrate_samples == 300) {
+                int64_t elapsed_ns = mono_ns() - bitrate_start_ns;
+                uint64_t actual_bps = elapsed_ns > 0
+                    ? encoded_bytes * 8ULL * 1000000000ULL /
+                      (uint64_t)elapsed_ns
+                    : 0;
+                printf("cam%d bitrate_stats frames=%d avg_au_bytes=%llu "
+                       "actual_mbps=%.2f target_mbps=%.2f\n",
+                       w->cam_id, bitrate_samples,
+                       (unsigned long long)(encoded_bytes /
+                                            (uint64_t)bitrate_samples),
+                       (double)actual_bps / 1000000.0,
+                       (double)BPS / 1000000.0);
+                fflush(stdout);
+                bitrate_samples = 0;
+                encoded_bytes = 0;
+                bitrate_start_ns = mono_ns();
+            }
             if (udp_tx_send_au(tx, pkt, pkt_len, frame_id, pts_ns, enc_done_ns,
                                key, w->cam_id) != 0)
                 fprintf(stderr, "cam%d send frame %u failed\n", w->cam_id, frame_id);
@@ -131,9 +176,10 @@ static void *cam_thread(void *arg)
 
 int main(int argc, char **argv)
 {
+    /* ==================== 阶段 1：解析发送目标 ==================== */
     if (argc < 3) {
         fprintf(stderr, "usage: %s <ip> <port>\n", argv[0]);
-        fprintf(stderr, "  cam0=/dev/video0 and cam1=/dev/video1 -> same ip:port\n");
+        fprintf(stderr, "  cam0..cam3=/dev/video0../dev/video3 -> same ip:port\n");
         return 1;
     }
 
@@ -147,22 +193,27 @@ int main(int argc, char **argv)
     signal(SIGINT, on_sig);
     signal(SIGTERM, on_sig);
 
-    struct CamWorker w0 = { 0, "/dev/video0", ip, port };
-    struct CamWorker w1 = { 1, "/dev/video1", ip, port };
+    /* ==================== 阶段 2：启动四路采集、编码与发送线程 ==================== */
+    const char *devices[] = {
+        "/dev/video0", "/dev/video1", "/dev/video2", "/dev/video3"
+    };
+    struct CamWorker workers[NUM_CAMS];
+    pthread_t threads[NUM_CAMS];
+    int started = 0;
 
-    pthread_t th0, th1;
-    if (pthread_create(&th0, NULL, cam_thread, &w0) != 0) {
-        perror("pthread_create cam0");
-        return 1;
-    }
-    if (pthread_create(&th1, NULL, cam_thread, &w1) != 0) {
-        perror("pthread_create cam1");
-        g_run = 0;
-        pthread_join(th0, NULL);
-        return 1;
+    for (int i = 0; i < NUM_CAMS; i++) {
+        workers[i] = (struct CamWorker){i, devices[i], ip, port};
+        if (pthread_create(&threads[i], NULL, cam_thread, &workers[i]) != 0) {
+            fprintf(stderr, "pthread_create cam%d failed\n", i);
+            g_run = 0;
+            break;
+        }
+        started++;
     }
 
-    pthread_join(th0, NULL);
-    pthread_join(th1, NULL);
-    return 0;
+    /* ==================== 阶段 3：等待线程退出并统一回收 ==================== */
+    for (int i = 0; i < started; i++)
+        pthread_join(threads[i], NULL);
+
+    return started == NUM_CAMS ? 0 : 1;
 }

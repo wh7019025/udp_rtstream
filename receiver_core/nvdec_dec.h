@@ -4,6 +4,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct NvDecCtx NvDecCtx;
 
 NvDecCtx *nvdec_dec_create(void);
@@ -19,5 +23,9 @@ const uint8_t *nvdec_dec_rgb(const NvDecCtx *dec, int *show_w, int *show_h);
 
 /* Microseconds from the last decode call: NVDEC vs GPU->CPU+scale preview. */
 void nvdec_dec_last_timing(const NvDecCtx *dec, int64_t *hw_us, int64_t *show_us);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

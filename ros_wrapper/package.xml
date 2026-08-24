@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>udp_rtstream_receiver</name>
+  <version>0.1.0</version>
+  <description>ROS 2 wrapper for the shared UDP camera receiver core.</description>
+  <maintainer email="se@example.com">se</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

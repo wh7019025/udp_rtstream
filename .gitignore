@@ -1,4 +1,8 @@
 **.o
-receive/udp_rtstream_rx
-send/udp_rtstream
-receive/udp_rtstream_rx_nvidia
+receiver_core/debug_receiver_mpp
+capture/udp_rtstream
+receiver_core/debug_receiver_nvidia
+ros_wrapper/build/
+ros_wrapper/install/
+ros_wrapper/log/
+time_sync_test/time_sync_test

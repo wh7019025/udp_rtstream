@@ -12,8 +12,8 @@
 #include <libswscale/swscale.h>
 #include <time.h>
 
-#define SHOW_W 960
-#define SHOW_H 768
+#define SHOW_W 640
+#define SHOW_H 512
 
 struct NvDecCtx {
     AVCodecContext *codec_ctx;

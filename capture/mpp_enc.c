@@ -9,6 +9,10 @@
 #include "rockchip/mpp_frame.h"
 #include "rockchip/rk_venc_cfg.h"
 
+#ifndef ENCODER_GOP
+#error "VIDEO_GOP must be supplied by config.env through Makefile"
+#endif
+
 struct MppEncCtx {
     MppCtx ctx;
     MppApi *mpi;
@@ -72,7 +76,7 @@ MppEncCtx *mpp_enc_create(int width, int height, int fps, int bps)
     mpp_enc_cfg_set_s32(enc->cfg, "rc:fps_in_denom", 1);
     mpp_enc_cfg_set_s32(enc->cfg, "rc:fps_out_num", fps);
     mpp_enc_cfg_set_s32(enc->cfg, "rc:fps_out_denom", 1);
-    mpp_enc_cfg_set_s32(enc->cfg, "rc:gop", 1);
+    mpp_enc_cfg_set_s32(enc->cfg, "rc:gop", ENCODER_GOP);
     mpp_enc_cfg_set_u32(enc->cfg, "rc:drop_mode", MPP_ENC_RC_DROP_FRM_DISABLED);
 
     mpp_enc_cfg_set_s32(enc->cfg, "rc:qp_init", -1);
